@@ -1,21 +1,41 @@
-# -*- coding: utf-8 -*-
-"""HUD 인식 상태 판정 — 무수신 · 페이드 · State 디바운싱.
+#!/usr/bin/env python3
+"""HUD 인식 상태 계층.
 
-수신 상태와 젯슨이 보낸 state 를 합쳐 화면에 띄울 state 를 한 곳에서 정한다. 그리기(render)는 결과를 받아 색과 밝기만 정한다.
+수신 상태와 인식 상태를 한 곳에서 판정한다. 그리기 코드(hud_theme)는 여기서
+나온 결과를 받아 색과 밝기만 정하고, 판정에는 관여하지 않는다.
 
-규칙 네 가지:
-1. 무수신은 곧 state 2 — packet_timeout_seconds 를 넘기면 젯슨 값과 무관하게 2 로 올린다.
-2. 차선은 lane_fade_seconds 에 걸쳐 어두워지고, 상태 바는 즉시 붉어진다.
-3. state 1 이 caution_timeout_seconds 를 넘으면 2 로 내린다 — 추정 선을 오래 띄우면 확정 선으로 오인된다.
-4. 0 → 1 은 rise_frames, 하강은 fall_frames 연속이어야 반영. 2 로 올라가는 것만 즉시.
+여기서 지키는 규칙은 네 가지다.
+
+1. 무수신은 곧 state 2 다. packet_timeout_seconds 를 넘기면 젯슨이 보내온
+   값과 무관하게 2 로 올린다. 젯슨이 죽으면 "차선 못 봄" 이라는 신호조차
+   오지 않으므로, 값이 오기를 기다리는 구조는 고장을 정상으로 표시한다.
+2. 차선은 뚝 끊기지 않고 lane_fade_seconds 에 걸쳐 어두워진다. 상태 바는
+   페이드를 기다리지 않고 즉시 붉어진다. 경고는 늦추지 않는다.
+3. state 1 이 caution_timeout_seconds 이상 이어지면 젯슨이 계속 1 을
+   보내더라도 2 로 내린다. state 1 은 추정 궤적이라 오래 띄워 두면 확정된
+   차선으로 오인된다.
+4. 디바운싱. 0 -> 1 상승은 rise_frames 연속, 하강은 fall_frames 연속으로
+   확인해야 반영한다. 2 로 올라가는 것만은 즉시 반영한다. 경고를 늦추는
+   쪽으로는 한 프레임도 쓰지 않는다.
+
+무수신(link_lost)과 젯슨이 보낸 state 2 는 화면 표시가 같다. 운전자가 할
+일이 "오버레이를 믿지 말 것" 으로 같기 때문이다. 다만 원인은 전혀 다르므로
+HudStatus.link_lost 와 reason 으로 구분해서 넘긴다. 디버그 표시와 로그는 이
+값을 봐야 한다.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-from .render import CONFIDENCE_FLOOR, STATE_CAUTION, STATE_LOST, STATE_NORMAL, normalize_state
-
+from hud_theme import (
+    CONFIDENCE_FLOOR,
+    STATE_CAUTION,
+    STATE_LOST,
+    STATE_NORMAL,
+    normalize_state,
+)
 
 DEFAULT_STATE: dict[str, Any] = {
     "lane_fade_seconds": 0.4,      # 무수신 후 차선이 사라지기까지
@@ -23,7 +43,6 @@ DEFAULT_STATE: dict[str, Any] = {
     "rise_frames": 3,              # 0 -> 1 상승 확인 프레임 수
     "fall_frames": 5,              # 1 -> 0, 2 -> 0 하강 확인 프레임 수
 }
-
 
 # 페이드가 이 아래로 내려가면 차선을 아예 그리지 않는다. 8비트로 합성하면
 # 어차피 보이지 않는 밝기라 투영 비용만 남는다.

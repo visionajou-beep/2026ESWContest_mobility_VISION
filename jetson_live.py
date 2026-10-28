@@ -8,13 +8,14 @@
 그리기를 기다리지 않는다(젯슨 실측 28.4 fps · 캡처 -> HUD 전송 중앙 52.5 ms, 25 W).
 
 사용법 (젯슨에서 — 시연 · 녹화 표준)
-    python3 jetson/live.py --model lane_v1_960x544_fp16.engine --device 0 --fps 30 --web 8080 --hud-host 192.168.50.20
+    python3 jetson_live.py --model lane_v1_960x544_fp16.engine --device 0 \\
+        --fps 30 --flip v --web 8080 --hud-host 192.168.50.20
 
     브라우저 http://<젯슨IP>:8080/ (젯슨 모니터면 http://localhost:8080/ + F11). 녹화는 화면의 버튼, 또는 이 터미널에서
     `r 이름` + Enter (정지 `r` + Enter). 녹화 하나 = recordings/<이름>/ 에 raw.mp4 · frames.csv · run.json.
 
     # 영상 파일로 돌려 보기 (데스크톱에서도 .pt 모델로 돈다)
-    python3 jetson/live.py --model best.pt --device 영상.mp4 --save --out result.mp4
+    python3 jetson_live.py --model best.pt --device 영상.mp4 --save --out result.mp4
 
 캡처는 1280x720 이 표준이다(기본값). 모델 입력(960x540)보다 크고, 학습 · 평가 데이터(BDD100K)가 원래 1280x720 이라
 정확도를 잰 것과 같은 경로(1280x720 -> 960x540)로 들어간다. 캡처보드 화면이 상하 반전으로 들어오면 `--flip v`.
@@ -33,8 +34,8 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-ROOT = Path(__file__).resolve().parents[1]          # 저장소 최상위 — postprocess · jetson 패키지
-sys.path.insert(0, str(ROOT))
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 from postprocess import STATE_HOLD, STATE_LOST, STATE_OK, EgoLaneTracker  # noqa: E402
 
 # 자차 왼쪽 / 오른쪽 / 차로변경 때 셋째 선 (BGR)
@@ -708,7 +709,7 @@ def main() -> None:
     model = YOLO(args.model, task="segment")
     hud = None
     if args.hud_host:
-        from jetson.hud_message import HudSender
+        from postprocess.hud_message import HudSender
         hud = HudSender(args.hud_host, args.hud_port)
         print(f"HUD 메시지: {args.hud_host}:{args.hud_port} (좌우 공통 곡률 + 교차 방지)")
     tracker = EgoLaneTracker(fps_nominal)
@@ -732,9 +733,9 @@ def main() -> None:
         writer = cv2.VideoWriter(args.out, cv2.VideoWriter_fourcc(*"mp4v"), fps_nominal, (w, h))
         print(f"파일로 저장합니다 -> {args.out}")
     # 데스크톱 재분석은 같은 판이어야 의미가 있다 — 이 실행의 후처리 파일 해시를 남긴다
-    sha = {f: hashlib.sha256((ROOT / f).read_bytes()).hexdigest()[:16]
-           for f in ("postprocess/tracker.py", "postprocess/geometry.py", "postprocess/missing_lane.py", "jetson/hud_message.py", "jetson/live.py")
-           if (ROOT / f).exists()}
+    sha = {f: hashlib.sha256((HERE / f).read_bytes()).hexdigest()[:16]
+           for f in ("postprocess/tracker.py", "postprocess/geometry.py", "postprocess/missing_lane.py", "postprocess/hud_message.py", "jetson_live.py")
+           if (HERE / f).exists()}
     control = RecordControl(args.rec_dir, fps_nominal, {
         "sha256_16": sha,
         "model": args.model, "imgsz": list(imgsz) if isinstance(imgsz, tuple) else imgsz,

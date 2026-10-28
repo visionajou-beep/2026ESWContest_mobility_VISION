@@ -1,13 +1,24 @@
-# -*- coding: utf-8 -*-
-"""실데이터를 보며 차선 오버레이를 키보드로 맞추는 미세 보정 도구 (calibrate trim).
+#!/usr/bin/env python3
+"""실데이터를 보며 차선 오버레이를 손으로 맞추는 미세 보정 도구.
 
-    python -m hud.calibrate trim              # 젯슨 패킷을 받으며 보정
-    python -m hud.calibrate trim --mock       # 젯슨 없이 가짜 차선으로
+    python3 hud_align.py trim              # 젯슨 패킷을 받으며 보정
+    python3 hud_align.py trim --mock       # 젯슨 없이 가짜 차선으로
 
-층을 셋으로 나눈다 — 입력 소스 → TrimCommand → TrimAdjuster → TrimParams → AlignmentMap.
-키보드가 아닌 입력(인코더 · UDP)을 붙이려면 TrimInput.poll 하나만 새로 만들면 된다.
-값 4 개(평행이동 · 사다리꼴 · 기울기)가 기존 정렬과 어떻게 합쳐지는지는 align.TrimParams 에 있다.
+층을 셋으로 나눈다.
+
+    입력 소스  ->  TrimCommand  ->  TrimAdjuster  ->  TrimParams  ->  AlignmentMap
+    (키보드)       (의도)           (보정 로직)       (값 4개)        (투영)
+
+입력 소스는 "무엇을 하라" 는 TrimCommand 만 만든다. 키 코드, 인코더 틱,
+UDP 메시지 같은 입력 장치 사정은 여기서 끝난다. TrimAdjuster 는 명령을
+받아 값을 바꾸고 저장·종료 확인을 처리할 뿐 입력이 어디서 왔는지 모른다.
+나중에 로터리 인코더나 UDP 로 갈아끼울 때는 poll() 이 TrimCommand 목록을
+돌려주는 클래스 하나만 새로 만들면 된다. 절대값을 주는 소스(아이트래킹 등)는
+TrimCommand.set 으로 값을 통째로 넘긴다.
+
+값 4개가 기존 정렬과 어떻게 합쳐지는지는 hud_align.TrimParams 에 있다.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,9 +29,8 @@ from typing import Any, Callable, Protocol
 import cv2
 import numpy as np
 
-from .align import TrimParams, ensure_alignment_config
-from .config import load_config, save_config
-from .sender import _mock_lane
+from hud_align import TrimParams, ensure_alignment_config
+from hud_system import _mock_lane, load_config, save_config
 
 
 # ---------------------------------------------------------------------------
@@ -28,14 +38,8 @@ from .sender import _mock_lane
 # ---------------------------------------------------------------------------
 
 MOVE, KEYSTONE, ROLL = "move", "keystone", "roll"
-
-
 RESET, SAVE, QUIT, TOGGLE_STEP, SET = "reset", "save", "quit", "toggle_step", "set"
-
-
 SAVE_QUIT = "save_quit"
-
-
 OTHER = "other"     # 뜻 없는 입력. 종료 확인을 취소하는 데만 쓰인다
 
 
@@ -196,16 +200,9 @@ class TrimAdjuster:
 # 윈도우는 가상키 코드를 준다. 하위 8비트만 보면 방향키가 대문자 Q R S T
 # 와 겹치므로 전체 코드로만 비교한다.
 ARROW_LEFT = (65361, 2424832)
-
-
 ARROW_UP = (65362, 2490368)
-
-
 ARROW_RIGHT = (65363, 2555904)
-
-
 ARROW_DOWN = (65364, 2621440)
-
 
 # 숫자 키패드. 운전석에서 한 손으로 쓰라고 둔 배치다.
 #
@@ -222,16 +219,9 @@ ARROW_DOWN = (65364, 2621440)
 # Num Lock 과 상관없이 '*', '+' 로 온다. 키패드 Enter 는 이 파이에서 일반
 # Enter 와 같은 13 으로 왔지만 KP_Enter 로 주는 환경도 있어 같이 받는다.
 KP_HOME, KP_LEFT, KP_UP, KP_RIGHT, KP_DOWN = 65429, 65430, 65431, 65432, 65433
-
-
 KP_PRIOR, KP_NEXT, KP_END, KP_BEGIN, KP_INSERT = 65434, 65435, 65436, 65437, 65438
-
-
 KP_ENTER = 65421
-
-
 KP_ADD = 65451
-
 
 KEYPAD = {
     (ord("8"), KP_UP): TrimCommand(MOVE, dy=-1),
@@ -248,21 +238,12 @@ KEYPAD = {
     (KP_ENTER, ord("+"), KP_ADD): TrimCommand(SAVE),
 }
 
-
 KEY_ENTER = (13, 10)
-
-
 KEY_ESC = 27
-
-
 KEY_TAB = 9
-
-
 # Shift, Ctrl, Caps Lock, Alt, Super 를 단독으로 누른 것. 종료 확인 중에
 # 이것만으로 취소되면 곤란하므로 무시한다.
 MODIFIER_KEYS = range(65505, 65519)
-
-
 # Num Lock 자체도 키로 온다. 키패드 쓰다가 켜고 끄는 것으로 확인이 취소되면 안 된다
 KEY_NUM_LOCK = 65407
 
@@ -355,8 +336,6 @@ class MockFeed:
 # ---------------------------------------------------------------------------
 
 OVERLAY_COLOR = (110, 110, 110)
-
-
 CONFIRM_COLOR = (80, 200, 255)
 
 
@@ -380,9 +359,7 @@ def _describe(adjuster: TrimAdjuster) -> str:
 
 def run_trim(args: argparse.Namespace) -> None:
     # 렌더러와 수신 경로는 receive 와 똑같은 것을 쓴다
-    from .config import ensure_ui_config
-    from .display import _open_window, make_renderer
-    from .receiver import LaneFeed
+    from hud_ui import LaneFeed, _open_window, ensure_ui_config, make_renderer
 
     config = load_config(args.config)
     ensure_ui_config(config)
@@ -400,7 +377,7 @@ def run_trim(args: argparse.Namespace) -> None:
         port = args.port or int(network["port"])
         feed = LaneFeed(config, bind_host, port)
         source_label = f"UDP {port}"
-        print(f"listening on {bind_host}:{port}. stop 'hud.display receive' first "
+        print(f"listening on {bind_host}:{port}. stop 'hud_ui.py receive' first "
               f"if it is running, or it will take the packets.")
 
     def on_change(trim: TrimParams) -> None:

@@ -1,7 +1,7 @@
 """추적기 출력 -> 젯슨에서 Pi 로 보내는 HUD 메시지.
 
-규격은 `jetson/protocol.py` 다(UDP 5005, 프레임당 JSON 하나). 선마다 추론 화면(960x540) 픽셀 좌표의
-2 차식 x = a*y^2 + b*y + c 와 state · conf · seq · ts · fps. 연결 끊김 · 순서는 Pi 쪽(hud 패키지)이
+규격은 `postprocess/protocol.py` 다(UDP 5005, 프레임당 JSON 하나). 선마다 추론 화면(960x540) 픽셀 좌표의
+2 차식 x = a*y^2 + b*y + c 와 state · conf · seq · ts · fps. 연결 끊김 · 순서는 Pi 쪽(hud-pi/)이
 처리하므로 여기서는 추적기가 아는 것을 그 메시지로 바꾸기만 한다.
 
     hud = HudSender("192.168.50.20")

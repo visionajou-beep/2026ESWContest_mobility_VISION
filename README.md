@@ -7,7 +7,7 @@
 
 ```
 카메라 영상 ─▶ 차선 분할 모델 (YOLO11s-seg, 960x544) ─▶ 후처리 (자차 좌 · 우 선 + State) ─▶ UDP/JSON ─▶ Raspberry Pi 5 ─▶ 하프미러 HUD
-               Jetson Orin Nano (TensorRT FP16, 34 FPS)          postprocess/                    jetson/          hud/
+               Jetson Orin Nano (TensorRT FP16, 34 FPS)          postprocess/                    jetson_live.py   hud-pi/
 ```
 
 ## 구성
@@ -26,30 +26,24 @@ postprocess/    자차 차선 후처리 (numpy 만 필요, 젯슨에서 그대�
   double_line.py    이중선 — 안쪽 선 쓰기
   lane.py           자료형 · State 0/1/2
   config.py         상수
-jetson/         Jetson 실행
-  live.py           캡처 → 추론 → 후처리 → HUD 송신 · 브라우저 확인 화면 · 녹화
   hud_message.py    추적기 결과 → HUD 메시지 (좌 · 우 2 차식, 휨 공유, y_range) · UDP 송신
   protocol.py       Jetson ↔ Pi 메시지 규격 (UDP 5005, JSON)
-hud/            Raspberry Pi HUD (OpenCV · numpy)
-  display.py        실행 — 수신 + 표시, 미리보기, 샘플 PNG, 진단 패턴, 렌더 속도
-  receiver.py       UDP 수신 → 스무딩 → State 판정 (가장 최근 패킷만 쓴다)
-  packet.py         패킷 규격 · 검증 · 젯슨 2 차식 → 폴리라인 변환
-  smooth.py         프레임 사이 차선 잇기 (흔들림 줄이기)
-  state.py          State 판정 — 무수신 · 페이드 · 디바운싱 · State 1 상한
-  align.py          운전자 시점 정렬 — 카메라 좌표 → 패널 픽셀 3×3 행렬, 미세 보정
-  calibrate.py      정렬 보정 도구 — 꼬깔 놓기 · 찍기 · 맞추기 · 확인 · 프로파일 · 아이박스 · trim
-  trim.py           실주행 차선 위에서 키보드로 미세 보정
-  render.py         AR 오버레이 렌더러 — 경계선 2 개 · State 색 · 상태 바 (가산 합성, 검정 배경)
-  render_basic.py   기본 렌더러 (흰 선)
-  pattern.py        패널 진단 패턴 (레터박스 · 반전 · 굵기)
-  sender.py         송신 어댑터 · 모의 송신기 (젯슨 없이 HUD 시험)
+jetson_live.py  Jetson 실행 — 캡처 → 추론 → 후처리 → HUD 송신 · 브라우저 확인 화면 · 녹화
+hud-pi/         Raspberry Pi HUD (OpenCV · numpy)
+  hud_system.py     UDP 수신 · 패킷 검증 · 젯슨 2 차식 → 폴리라인 변환 · 스무딩 · 송신 어댑터 · 모의 송신
+  hud_ui.py         실행 — 수신 + 표시, 미리보기, 샘플 PNG, 진단 패턴, 렌더 속도
+  hud_state.py      State 판정 — 무수신 · 페이드 · 디바운싱 · State 1 상한
+  hud_theme.py      AR 오버레이 렌더러 — 경계선 2 개 · State 색 · 상태 바 (가산 합성, 검정 배경)
+  hud_align.py      운전자 시점 정렬 — 카메라 좌표 → 패널 픽셀 3×3 행렬 · 보정 도구 (place · pick · aim · verify · eyebox · profile)
+  hud_trim.py       실주행 차선 위에서 키보드로 미세 보정
   hud_config.json   설정 — display · network · state · alignment · theme
+  docs/             사용법 (시점 정렬 · 화면 구성 · 시안 구현 · 핸드오프)
 eval/           평가 (정답 영상 채점)
   predict.py        정답 프레임마다 앞 6 초를 모델로 추론해 저장
   ground_truth.py   정답 라벨 읽기 · 정답 쪽 자차 선 고르기
   score.py          후처리를 돌려 그린 선과 정답 선 짝짓기
   line_error.py     선 오차 계산 · 결과 표
-tests/          후처리 81 + HUD 8 (실제 모델 출력 · 실제 젯슨 패킷 고정 정답 포함)
+tests/          후처리 테스트 81 (실제 모델 출력 고정 정답 포함)
 ```
 
 ## 처리 흐름
@@ -73,7 +67,7 @@ pip install -r requirements.txt
 ```
 
 - 학습 · 평가: PyTorch 는 GPU 에 맞는 CUDA 판을 따로 설치한다.
-- Jetson: JetPack 의 TensorRT · OpenCV 를 쓰고 `ultralytics` 만 추가한다. 엔진은 `best.pt` 를 ONNX(opset 17) → TensorRT FP16(입력 960×544)으로 변환해 만든다.
+- Jetson: 저장소 최상위에서 `jetson_live.py` 를 실행한다. JetPack 의 TensorRT · OpenCV 를 쓰고 `ultralytics` 만 추가한다. 엔진은 `best.pt` 를 ONNX(opset 17) → TensorRT FP16(입력 960×544)으로 변환해 만든다.
 - Raspberry Pi: `sudo apt install python3-opencv python3-numpy` (pip 로 OpenCV 를 설치하지 않는다). 후처리와 HUD 는 numpy · OpenCV 만 있으면 된다.
 
 ## 사용법
@@ -88,30 +82,30 @@ python train/train.py --config train/config.yaml
 **Jetson 실행** (카메라 또는 캡처보드 → 추론 → 후처리 → Pi 로 송신, 브라우저 `http://<젯슨IP>:8080` 에서 확인 · 녹화)
 
 ```bash
-python3 jetson/live.py --model lane_v1_960x544_fp16.engine --device 0 --fps 30 --web 8080 --hud-host 192.168.50.20
-python3 jetson/live.py --model best.pt --device 영상.mp4 --save --out result.mp4      # 영상 파일로 돌려 보기 (PC)
+python3 jetson_live.py --model lane_v1_960x544_fp16.engine --device 0 --fps 30 --web 8080 --hud-host 192.168.50.20
+python3 jetson_live.py --model best.pt --device 영상.mp4 --save --out result.mp4      # 영상 파일로 돌려 보기 (PC)
 ```
 
 카메라는 차량 중앙(룸미러 쪽)에 고정한 뒤에 실행한다 — 소실점을 주행 중 스스로 배우므로(10 초 창), 켠 뒤 카메라를 움직이면 한동안 선을 못 고른다.
 
-**Raspberry Pi HUD**
+**Raspberry Pi HUD** (`hud-pi/` 폴더에서)
 
 ```bash
-python -m hud.display receive --theme           # 수신 + AR 오버레이 표시 (실제 운용)
-python -m hud.display receive --theme --stats   # 2 초마다 fps · 지연 · 버린 패킷
-python -m hud.display preview --theme           # 네트워크 없이 화면 구성만
-python -m hud.display bench --theme             # 이 장치의 렌더 시간 (1920×1200 에서 약 22 ms)
-python -m hud.sender mock                       # 젯슨 없이 가짜 차선 송신
+python3 hud_ui.py receive --theme           # 수신 + AR 오버레이 표시 (실제 운용)
+python3 hud_ui.py receive --theme --stats   # 2 초마다 fps · 지연 · 버린 패킷
+python3 hud_ui.py preview --theme           # 네트워크 없이 화면 구성만
+python3 hud_ui.py bench --theme             # 이 장치의 렌더 시간 (1920×1200 에서 약 22 ms)
+python3 hud_system.py mock                  # 젯슨 없이 가짜 차선 송신
 ```
 
 운전자 시점 정렬(한 번) — 모니터를 먼저 단단히 고정하고, 노면 위 같은 지점을 카메라 영상과 HUD 화면에서 찍어 행렬을 구한다.
 
 ```bash
-python -m hud.calibrate place     # HUD 가 찍은 자리에 꼬깔 놓기
-python -m hud.calibrate pick --frame road.png
-python -m hud.calibrate aim       # 운전석에서 십자 맞추기
-python -m hud.calibrate verify    # 확인 · 통째로 밀기 · 저장
-python -m hud.calibrate trim      # 실주행 차선 위에서 키보드로 미세 보정
+python3 hud_align.py place     # HUD 가 찍은 자리에 꼬깔 놓기
+python3 hud_align.py pick --frame road.png
+python3 hud_align.py aim       # 운전석에서 십자 맞추기
+python3 hud_align.py verify    # 확인 · 통째로 밀기 · 저장
+python3 hud_align.py trim      # 실주행 차선 위에서 키보드로 미세 보정
 ```
 
 운전자가 바뀌면 `eyebox`(같은 눈 위치에 앉히기) · `profile --name <이름>`(두 사람 보정을 저장해 사이를 섞기)으로 재보정 없이 맞춘다.

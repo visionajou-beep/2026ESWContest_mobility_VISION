@@ -1,14 +1,30 @@
-# -*- coding: utf-8 -*-
-"""AR HUD 차선 오버레이 렌더러 (OpenCV).
+#!/usr/bin/env python3
+"""AR HUD 차선 오버레이를 OpenCV 로 구현한 렌더러.
 
-반사식 HUD 는 화면 요소가 많을수록 운전자 시야를 가린다. 그래서 좌우 차선 경계선 두 개와 얇은 상태 바만 그린다.
-- 배경은 순수 검정(반사 광학계에서 검정 = 투명)
-- 합성은 알파가 아니라 가산(발광 디스플레이)
-- 선 굵기는 화면 높이 비율(theme.*_width_ratio) — 패널이 바뀌어도 보이는 굵기가 같다
+반사식 HUD 는 화면 요소가 많을수록 운전자 시야를 가린다. 그래서 좌우 차선
+경계선만 그린다. 리본 채움, 거리 틱, 상단 칩과 상태 스트립, 글로우는 전부
+뺐다. 남은 것은 선 두 개와 인식 상태에 따른 색, 차선 이탈 판정에 따른
+굵기·점멸뿐이다.
 
-차선 폴리라인은 정규화 좌표로 받아 정렬 행렬(align)로 투영한다. state(0 정상 / 1 주의 / 2 인식 불가)는
-상태 바 색과 차선 색만 정한다 — 0 녹색, 1 노란색, 2 는 차선을 그리지 않는다. state 를 언제 무엇으로 볼지는 state 모듈이 정한다.
+  - 원근 페이드: 마스크를 그린 뒤 세로 방향 알파 램프를 곱한다
+  - 합성: 발광 디스플레이라 알파가 아니라 가산으로 쌓는다
+  - 선 굵기: 절대 픽셀이 아니라 화면 높이 비율 (theme.*_width_ratio)
+
+차선 폴리라인은 추론이 보낸 정규화 좌표를 운전자 시점 정렬 행렬로 투영해서
+그린다.
+
+인식 상태 state(0 정상 / 1 주의 / 2 인식 불가)는 두 군데에 나타난다.
+화면 아래쪽, 가장자리에서 state_bar_margin_ratio 만큼 안쪽을 가로지르는
+얇은 상태 바는 state 색 한 가지로 항상 그린다. state 2 에서도 그린다.
+차선에서 state 는 색만 정한다. 0 은 녹색, 1 은 노란색, 2 는 아예 그리지 않는다. 0 과 1 은 색만 다르고 굵기·모양·밝기가
+완전히 같다. 차선 색은 상태 바와 같은 STATE_COLORS 를 쓴다. 차선 이탈 경고도 색에 관여하지 않고 굵기와
+점멸만 바꾼다.
+
+state 를 언제 무엇으로 볼지는 여기서 정하지 않는다. 무수신 판정, 페이드,
+디바운싱은 hud_state 가 맡고 이 파일은 render() 인자로 받은 state 와
+lane_state / lane_opacity 를 그대로 칠한다.
 """
+
 from __future__ import annotations
 
 import time
@@ -17,39 +33,25 @@ from typing import Any
 import cv2
 import numpy as np
 
-from .align import AlignmentMap, ensure_alignment_config
-from .packet import _clip_polyline
-
+from hud_align import AlignmentMap, ensure_alignment_config
+from hud_system import _clip_polyline
 
 DESIGN_W, DESIGN_H = 960.0, 540.0
-
-
 HORIZON_Y = 172.0
-
 
 ALERT = (61, 77, 255)        # #ff4d3d BGR
 
-
 EDGE_STOPS = ((0.0, 1.0), (0.62, 0.72), (1.0, 0.0))
-
-
 DIM_STOPS = ((0.0, 0.34), (0.70, 0.12), (1.0, 0.0))
-
-
 ALERT_EDGE_STOPS = ((0.0, 1.0), (0.62, 0.70), (1.0, 0.0))
-
 
 BLINK_PERIOD = 0.820
 
-
 # 인식 상태. 0 정상, 1 주의(차선이 흐릿함), 2 인식 불가.
 # 젯슨이 패킷에 실어 보낸다. 프로토콜 합의 전이라 빠져 있을 수 있고
-# 그때는 0 으로 본다. 다른 모듈도 이 정의를 가져다 쓴다.
+# 그때는 0 으로 본다. hud_ui 도 이 정의를 가져다 쓴다.
 STATE_NORMAL, STATE_CAUTION, STATE_LOST = 0, 1, 2
-
-
 LANE_STATES = (STATE_NORMAL, STATE_CAUTION, STATE_LOST)
-
 
 # 상태 바와 차선 색. 인덱스가 곧 state 다.
 STATE_COLORS = (
@@ -57,7 +59,6 @@ STATE_COLORS = (
     (100, 220, 240),     # 1 주의   노란색
     ALERT,               # 2 인식 불가  붉은색
 )
-
 
 CONFIDENCE_FLOOR = 0.45  # 이 아래면 state 를 1 로 올린다 (대체 신호)
 
@@ -115,7 +116,7 @@ class ThemeRenderer:
         # SAFE 사각형이 같은 값이다.
         theme.setdefault("state_bar_margin_ratio", 0.03)
         self.theme = theme
-        # display 의 preview / sample 과 인터페이스를 맞추기 위한 최소 항목
+        # hud_ui 의 preview / sample 과 인터페이스를 맞추기 위한 최소 항목
         self.ui = config.setdefault("ui", {})
         self.ui.setdefault("debug", {"enabled": False})
         self.ui.setdefault(
@@ -216,7 +217,9 @@ class ThemeRenderer:
     ) -> int:
         """인식 상태를 한 곳에서 정한다.
 
-        state 1(주의)은 색만 바뀐다. confidence 는 젯슨이 state 를
+        예전에는 telemetry.confidence 로 저신뢰 판정을 따로 해서 점선과 감광을
+        걸었는데, 그게 결국 state 1(주의) 과 같은 이야기였다. 점선과 감광은
+        이제 아예 없고 state 1 은 색만 바뀐다. confidence 는 젯슨이 state 를
         안 실어 보낼 때만 쓰는 대체 신호로 남았다. state 가 이미 0 이 아니면
         그대로 따른다. 상태 바와 차선은 여기서 나온 값 하나만 본다.
 
@@ -236,8 +239,9 @@ class ThemeRenderer:
 
         순서는 투영 전에 카메라 y 로 정한다. 카메라 영상에서는 아래(y 큰
         쪽)가 항상 가까운 쪽이지만, 패널에서는 상하 반전이나 대응쌍 행렬이
-        위아래를 뒤집을 수 있어 패널 y 로는 원근을 알 수 없다(투영 뒤 패널 y 로
-        정렬하면 flip_vertical 에서 원거리가 맨 앞에 와 페이드가 거꾸로 걸린다). 아래 필터링은 전부 순서를 유지한다.
+        위아래를 뒤집을 수 있어 패널 y 로는 원근을 알 수 없다. 예전처럼
+        투영 뒤 패널 y 로 정렬하면 flip_vertical 에서 원거리가 맨 앞에 와
+        페이드가 거꾸로 걸렸다. 아래 필터링은 전부 순서를 유지한다.
         """
         clipped = self.mapper.clip_above_horizon(lane)
         clipped = clipped[np.argsort(-clipped[:, 1], kind="stable")]
@@ -446,7 +450,7 @@ class ThemeRenderer:
         self.state = self._resolve_state(state, warning, telemetry)
         # 차선 색과 밝기는 상태 바 state 와 따로 받을 수 있다. 무수신 페이드
         # 중에는 상태 바만 즉시 붉어지고 차선은 직전 색 그대로 어두워진다.
-        # 판정은 state 모듈이 하고 여기서는 받은 값을 칠하기만 한다.
+        # 판정은 hud_state 가 하고 여기서는 받은 값을 칠하기만 한다.
         self.lane_state = (
             self.state if lane_state is None else normalize_state(lane_state)
         )
