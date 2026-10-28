@@ -1,0 +1,10 @@
+# 개발 PC (학습 · 평가) — Python 3.12 · PyTorch 2.13 + CUDA 13.0 에서 학습했다 (PyTorch 는 CUDA 판을 따로 설치: https://pytorch.org)
+ultralytics==8.4.112
+numpy>=2.0,<3
+opencv-python>=4.8
+PyYAML>=6,<7
+Pillow>=10.4
+pytest>=8.3
+
+# Jetson (jetson/): JetPack 의 TensorRT · OpenCV + ultralytics
+# Raspberry Pi (hud/ · postprocess/): numpy · OpenCV 만 — sudo apt install python3-opencv python3-numpy

@@ -1,0 +1,27 @@
+# 배포 모델을 만든 학습 설정 (결과 runs/segment/desktop_full_960, 가장 좋은 epoch 81)
+# 여기 없는 값은 Ultralytics 8.4.112 기본값이다.
+# 상대경로는 이 파일이 있는 폴더 기준이다.
+
+model: yolo11s-seg.pt                 # Ultralytics 가 COCO 로 사전학습한 YOLO11s-seg 에서 출발
+data: bdd100k_yolo11_seg/data.yaml    # make_dataset.py 가 만든 데이터셋 (1 클래스 lane_boundary, 8 만 장)
+imgsz: 960
+epochs: 100
+batch: 12                             # 12 GB GPU 에서 차선이 많은 장면까지 여유 있게 (16 은 메모리가 빠듯)
+workers: 4
+device: 0
+seed: 42
+deterministic: true
+project: runs/segment
+name: desktop_full_960
+exist_ok: false
+pretrained: true
+cache: false
+amp: true
+val: true
+patience: 20                          # 검증 성능이 20 epoch 동안 나아지지 않으면 멈춘다
+save: true
+save_period: 10
+plots: true
+fliplr: 0.5                           # 좌우 반전 — 왼쪽 · 오른쪽 차선 모두
+flipud: 0.0
+mosaic: 0.0                           # 네 장 이어 붙이기 끔
